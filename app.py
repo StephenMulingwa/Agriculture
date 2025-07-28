@@ -3,16 +3,15 @@ import pandas as pd
 from sqlalchemy import create_engine
 from streamlit_folium import st_folium
 import folium
-import calendar
 
-# Page config
+# --- Page Configuration ---
 st.set_page_config(page_title="Kenyan Market Prices", layout="wide")
 st.title("🇰🇪 Kenyan Agricultural Market Prices Explorer")
 
 # --- Secure Database Connection ---
 engine = create_engine(st.secrets["database"]["url"])
 
-# Load Data
+# --- Load Data ---
 @st.cache_data
 def load_data():
     return pd.read_sql("SELECT * FROM public.data", engine)
@@ -20,7 +19,7 @@ def load_data():
 df = load_data()
 df["county"] = df["county"].str.lower().str.strip()
 
-# County coordinates
+# --- Coordinates ---
 county_coords = {
     "baringo": (0.6411, 36.0915), "bomet": (-0.7826, 35.3027), "bungoma": (0.5685, 34.5584),
     "busia": (0.4694, 34.0901), "elgeyo marakwet": (1.1436, 35.4786), "embu": (-0.5399, 37.4570),
@@ -40,56 +39,64 @@ county_coords = {
     "wajir": (1.7500, 40.0500), "west pokot": (1.3057, 35.3646)
 }
 
-# --- Filters Section ---
-st.markdown("### 🔍 Filter Data Below")
+# --- Filter Layout ---
+st.markdown("### 🔍 Filter Market Prices")
 
-commodities = ["All"] + sorted(df["Commodity"].dropna().unique())
-years = sorted(df["year"].dropna().unique())
-months = sorted(df["month"].dropna().unique())
+unique_commodities = sorted(df["Commodity"].dropna().unique().tolist())
+unique_years = sorted(df["year"].dropna().unique().tolist())
+unique_months = sorted(df["month"].dropna().unique().tolist())
 
-selected_commodity = st.selectbox("Commodity", commodities)
-selected_year = st.selectbox("Year", years)
-selected_month = st.selectbox("Month", months)
+col1, col2, col3 = st.columns(3)
+with col1:
+    selected_commodity = st.selectbox("Commodity", ["All"] + unique_commodities)
+with col2:
+    selected_year = st.selectbox("Year", ["All"] + unique_years)
+with col3:
+    selected_month = st.selectbox("Month", ["All"] + unique_months)
+# --- Filtering ---
+filtered_df = df.copy()
 
-# --- Filtered Data ---
-if selected_commodity == "All":
-    filtered_df = df[
-        (df["year"] == selected_year) &
-        (df["month"] == selected_month)
-    ].copy()
-else:
-    filtered_df = df[
-        (df["Commodity"] == selected_commodity) &
-        (df["year"] == selected_year) &
-        (df["month"] == selected_month)
-    ].copy()
-# --- Capitalize titles ---
-commodity_title = selected_commodity.title() if selected_commodity != "All" else "All Commodities"
-month_title = selected_month.title() if selected_month != "All" else "All Months"
-year_title = str(selected_year) if selected_year != "All" else "All Years"
-title_suffix = f"{month_title} {year_title}"
+if selected_commodity != "All":
+    filtered_df = filtered_df[filtered_df["Commodity"] == selected_commodity]
+if selected_year != "All":
+    filtered_df = filtered_df[filtered_df["year"] == selected_year]
+if selected_month != "All":
+    filtered_df = filtered_df[filtered_df["month"].str.lower() == selected_month.lower()]
 
-# --- Display Table and Map Below ---
+# --- Header Info ---
+header_parts = []
+if selected_commodity != "All":
+    header_parts.append(selected_commodity)
+if selected_month != "All":
+    header_parts.append(selected_month)
+if selected_year != "All":
+    header_parts.append(str(selected_year))
+header_suffix = " - " + " ".join(header_parts) if header_parts else ""
+
+# --- Data Table ---
 if not filtered_df.empty:
-    filtered_df["lat"] = filtered_df["county"].map(lambda x: county_coords.get(x, (None, None))[0])
-    filtered_df["lon"] = filtered_df["county"].map(lambda x: county_coords.get(x, (None, None))[1])
-    map_df = filtered_df.dropna(subset=["lat", "lon"])
-
-    st.markdown(f"### 📊 Market Prices for {commodity_title} - {title_suffix}")
+    st.markdown(f"### 🛒 Market Prices{header_suffix}")
     display_df = filtered_df[["county", "market", "Commodity", "unit", "kg", "price"]].sort_values(by="price", ascending=False)
     st.dataframe(display_df.reset_index(drop=True), use_container_width=True)
 
+    # --- Map ---
+    st.markdown(f"### 🗺️ County Price Map{header_suffix}")
+
+    # Add coordinates
+    filtered_df["lat"] = filtered_df["county"].map(lambda x: county_coords.get(x.lower(), (None, None))[0])
+    filtered_df["lon"] = filtered_df["county"].map(lambda x: county_coords.get(x.lower(), (None, None))[1])
+    map_df = filtered_df.dropna(subset=["lat", "lon"])
+
     if selected_commodity != "All" and not map_df.empty:
-        st.markdown(f"### 🗺️ County Price Map for {commodity_title} - {title_suffix}")
         m = folium.Map(location=[0.1768, 37.9083], zoom_start=6, tiles="OpenStreetMap")
         for _, row in map_df.iterrows():
-            popup = f"{row['county'].title()}<br>Ksh {row['price']}"
+            popup = f"{row['county'].title()}<br><b>Ksh {row['price']}</b>"
             folium.Marker(
                 location=[row["lat"], row["lon"]],
                 popup=popup,
                 tooltip=row["county"].title()
             ).add_to(m)
-        st_folium(m, height=500, width=700)
+        st_folium(m, height=550, width=900)
     else:
         st.info("Map is hidden when 'All' commodities are selected to avoid clutter.")
 else:
